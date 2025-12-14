@@ -103,13 +103,16 @@ const loadStreams = () => {
 };
 
 const createRoom = (stream) => {
-    ClientService.send('room.new', { stream, meta: meta.value });
+    // Important for series: use the *episode* id (e.g. tt123:1:1) so subtitle addons/OpenSubtitles return results.
+    const { id } = router.currentRoute.value.params;
+    ClientService.send('room.new', { stream, meta: { ...meta.value, id } });
 };
 
 watch(installedAddonsState, () => loadStreams());
 watch(selectedSeason, () => loadStreams());
 watch(selectedEpisode, (value) => {
-    router.replace({ path: value.id });
+    // Keep the user on the /stream/:type/:id route; value.id is an episode id for series (tt...:season:episode).
+    router.replace({ name: 'stream', params: { ...router.currentRoute.value.params, id: value.id } });
     loadStreams();
 });
 watch(clientRoomState, ({ id }) => {
