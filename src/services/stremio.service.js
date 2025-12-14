@@ -1,5 +1,21 @@
 import axios from "axios";
-import { CINEMETA_URL, OPENSUBTITLES_URL, STREMIO_API_URL, STREMIO_STREAMING_SERVER } from "@/common/config";
+import { CINEMETA_URL, OPENSUBTITLES_URL, STREMIO_API_URL, STREMIO_STREAMING_SERVER, STREMIO_STREAMING_SERVER_RAW } from "@/common/config";
+
+function toRawStremioUrl(url) {
+    if (!url) return url;
+    // Convert proxied URLs back to the real Stremio server URL when passing as a parameter to Stremio.
+    if (url.startsWith('/stremio')) return `${STREMIO_STREAMING_SERVER_RAW}${url.replace('/stremio', '')}`;
+    // Also handle absolute same-origin proxy URLs (e.g. http://localhost:8080/stremio/...)
+    try {
+        const u = new URL(url, window.location.origin);
+        if (u.pathname.startsWith('/stremio')) {
+            return `${STREMIO_STREAMING_SERVER_RAW}${u.pathname.replace('/stremio', '')}${u.search}`;
+        }
+    } catch (_) {
+        // ignore
+    }
+    return url;
+}
 
 const StremioService = {
 
@@ -68,7 +84,8 @@ const StremioService = {
 };
 
 async function getOpenSubInfo(streamUrl) {
-    const { data } = await axios.get(`${STREMIO_STREAMING_SERVER}/opensubHash?videoUrl=${streamUrl}`);
+    const rawUrl = encodeURIComponent(toRawStremioUrl(streamUrl));
+    const { data } = await axios.get(`${STREMIO_STREAMING_SERVER}/opensubHash?videoUrl=${rawUrl}`);
     const { result } = data;
     return result;
 }

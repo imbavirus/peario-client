@@ -1,12 +1,22 @@
 import Hls from 'hls.js';
 import hat from 'hat';
-import { STREMIO_STREAMING_SERVER } from '@/common/config';
+import { STREMIO_STREAMING_SERVER, STREMIO_STREAMING_SERVER_RAW } from '@/common/config';
 
 const HlsService = {
 
     hls: null,
 
     init() {
+        // Re-init safely (helps with hot reload / remounts).
+        if (this.hls) {
+            try {
+                this.hls.destroy();
+            } catch (e) {
+                // Ignore destroy errors; we just want a clean re-init in dev/hot-reload scenarios.
+                console.warn('Failed to destroy previous HLS instance', e);
+            }
+        }
+
         this.hls = new Hls({
             startLevel: 0,
             abrMaxWithRealBitrate: true
@@ -16,8 +26,13 @@ const HlsService = {
     async createPlaylist(mediaURL) {
         const id = hat();
 
+        // If we're using the dev proxy, Stremio still needs a URL it can fetch itself (raw localhost:11470).
+        const rawMediaURL = (mediaURL && mediaURL.startsWith('/stremio'))
+            ? `${STREMIO_STREAMING_SERVER_RAW}${mediaURL.replace('/stremio', '')}`
+            : mediaURL;
+
         const queryParams = new URLSearchParams([
-            ['mediaURL', mediaURL],
+            ['mediaURL', rawMediaURL],
             ['videoCodecs', 'h264'],
             ['videoCodecs', 'vp9'],
             ['audioCodecs', 'aac'],
@@ -30,10 +45,37 @@ const HlsService = {
     },
 
     loadHls(playlistUrl, videoElement) {
-        return new Promise(resolve => {
-            this.hls.loadSource(playlistUrl);
-            this.hls.attachMedia(videoElement);
-            this.hls.on(Hls.Events.MEDIA_ATTACHED, resolve());
+        return new Promise((resolve, reject) => {
+            if (!Hls.isSupported()) {
+                return reject(new Error('HLS not supported in this browser'));
+            }
+
+            try {
+                const onManifestParsed = () => {
+                    cleanup();
+                    resolve();
+                };
+
+                const onError = (_, data) => {
+                    // Reject on fatal errors so callers can show UI instead of buffering forever.
+                    if (data && data.fatal) {
+                        cleanup();
+                        reject(new Error(data.details || data.type || 'HLS fatal error'));
+                    }
+                };
+
+                const cleanup = () => {
+                    this.hls.off(Hls.Events.MANIFEST_PARSED, onManifestParsed);
+                    this.hls.off(Hls.Events.ERROR, onError);
+                };
+
+                this.hls.on(Hls.Events.MANIFEST_PARSED, onManifestParsed);
+                this.hls.on(Hls.Events.ERROR, onError);
+                this.hls.loadSource(playlistUrl);
+                this.hls.attachMedia(videoElement);
+            } catch (e) {
+                reject(e);
+            }
         });
     },
 

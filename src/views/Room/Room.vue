@@ -1,6 +1,7 @@
 <template>
     <div :class="['room', { 'chat-open': isChatOpen }]">
         <Loading type="room" v-if="!playerOptions"></Loading>
+        <Error v-else-if="joinTimedOut" type="room" />
 
         <UsersList
             :show="!playerState.controlsHidden"
@@ -30,6 +31,7 @@ import router from '@/router';
 import store from '@/store';
 
 import Loading from "@/components/Loading.vue";
+import Error from "@/components/Error.vue";
 import Button from "@/components/ui/Button.vue";
 import Player from "@/components/player/Player.vue";
 import Chat from "@/components/Chat.vue";
@@ -42,6 +44,7 @@ import { onBeforeRouteLeave } from 'vue-router';
 const initialized = ref(false); 
 const playerOptions = ref(null); 
 const isChatOpen = ref(false); 
+const joinTimedOut = ref(false);
 
 const clientState = computed(() => store.state.client);
 const clientRoomState = computed(() => store.state.client.room);
@@ -119,6 +122,11 @@ let syncPlayerInterval = null;
 onMounted(() => {
     const { id } = router.currentRoute.value.params;
     ClientService.send('room.join', { id });
+
+    // If we never receive room state (sync/room), show a hint instead of spinning forever.
+    setTimeout(() => {
+        if (!playerOptions.value) joinTimedOut.value = true;
+    }, 8000);
     
     syncPlayerInterval = setInterval(() => {
         if (playerState.value.video && !playerState.value.paused) {

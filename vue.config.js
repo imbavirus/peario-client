@@ -26,6 +26,15 @@ module.exports = defineConfig({
             client: {
                 overlay: false,
             },
+            // Proxy Stremio streaming server to avoid CORS in development (HLS uses XHR/fetch).
+            proxy: {
+                '^/stremio': {
+                    target: 'http://localhost:11470',
+                    changeOrigin: true,
+                    ws: true,
+                    pathRewrite: { '^/stremio': '' },
+                },
+            },
         },
     },
     css: {

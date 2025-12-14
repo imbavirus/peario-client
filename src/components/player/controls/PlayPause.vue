@@ -21,11 +21,21 @@ export default {
         autoSync: 'player/autoSync'
     }),
     methods: {
-        togglePlay() {
+        async togglePlay() {
             if ((!this.options.isOwner && !this.autoSync) || this.options.isOwner) {
-                this.paused ? this.video.play() : this.video.pause();
-                store.commit('player/updatePaused', this.video.paused);
-                this.$emit('change', this.paused);
+                try {
+                    if (this.paused) {
+                        await this.video.play();
+                        store.commit('player/updatePaused', false);
+                    } else {
+                        this.video.pause();
+                        store.commit('player/updatePaused', true);
+                    }
+                    this.$emit('change', this.paused);
+                } catch (e) {
+                    console.error('Failed to play', e);
+                    this.$toast?.error?.('Playback failed to start (check stream / browser console)');
+                }
             }
         },
         onKeyUp({ code }) {

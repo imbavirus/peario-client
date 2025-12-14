@@ -20,16 +20,34 @@ export default {
     }),
     data() {
         return {
-            isHls: false
+            isHls: false,
+            hasTriedFallback: false,
         }
     },
     methods: {
+        async onVideoError() {
+            // If raw stream fails and we have an HLS playlist, attempt a one-time fallback.
+            if (this.options && this.options.hls && !this.isHls && !this.hasTriedFallback) {
+                this.hasTriedFallback = true;
+                await this.toggleHls();
+                return;
+            }
+
+            this.$toast.error('Stream failed to load');
+        },
         async toggleHls() {
             const currentTime = this.video.currentTime;
             const wasPlaying = !this.video.paused;
 
-            if (!this.isHls) await HlsService.loadHls(this.options.hls, this.video);
-            else store.commit('player/updateVideoSrc', this.options.src);
+            try {
+                if (!this.isHls) await HlsService.loadHls(this.options.hls, this.video);
+                else store.commit('player/updateVideoSrc', this.options.src);
+            } catch (e) {
+                // If HLS attach fails, don't leave the player stuck in a "half toggled" state.
+                console.error('Failed to toggle HLS', e);
+                this.$toast.error(`Failed to load stream: ${e && e.message ? e.message : 'unknown error'}`);
+                return;
+            }
             
             this.isHls = !this.isHls;
             store.commit('player/updateVideoCurrentTime', currentTime);
@@ -40,11 +58,18 @@ export default {
     },
     mounted() {
         HlsService.init();
-        this.video.addEventListener('error', this.toggleHls);
+        this.video.addEventListener('error', this.onVideoError);
+
+        // For torrent streams we usually generate an HLS playlist. The raw file endpoint can "buffer forever"
+        // without throwing, so prefer HLS by default when available.
+        if (this.options && this.options.hls) {
+            this.hasTriedFallback = true;
+            this.toggleHls();
+        }
     },
     unmounted() {
         HlsService.clear();
-        this.video.removeEventListener('onerror', this.toggleHls);
+        this.video.removeEventListener('error', this.onVideoError);
     }
 }
 </script>

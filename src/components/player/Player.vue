@@ -21,7 +21,8 @@
             @timeupdate="updateCurrentTime"
             @waiting="() => updateBuffering(true)"
             @loadedmetadata="() => updateBuffering(false)"
-            @canplay="() => updateBuffering(false)">
+            @canplay="() => updateBuffering(false)"
+            @error="onVideoError">
         </video>
 
         <div class="controls" v-if="!locked && videoRef">
@@ -126,6 +127,18 @@ const onSubtitlesDropped = (event) => {
         if (file.name.endsWith('.srt'))
             userSubtitle.value = file;
     }
+};
+
+const onVideoError = () => {
+    const el = videoRef.value;
+    const mediaError = el && el.error ? el.error : null;
+    // eslint-disable-next-line no-console
+    console.error('Video error', {
+        src: el?.currentSrc || el?.src,
+        networkState: el?.networkState,
+        readyState: el?.readyState,
+        error: mediaError,
+    });
 };
 
 onMounted(() => {
