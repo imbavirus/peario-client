@@ -20,8 +20,9 @@
 
 <script>
 export default {
+    emits: ['update:modelValue', 'open', 'close'],
     props: {
-        modelValue: String,
+        modelValue: [String, Number],
         options: Array
     },
     data() {
@@ -31,12 +32,13 @@ export default {
     },
     computed: {
         selected() {
-            return this.options.find(({ value }) => value === this.modelValue);
+            return this.options.find(({ value }) => value === this.modelValue) || this.options[0] || { name: '', value: '' };
         }
     },
     methods: {
         toggle() {
             this.active = !this.active;
+            this.$emit(this.active ? 'open' : 'close');
         }
     }
 }

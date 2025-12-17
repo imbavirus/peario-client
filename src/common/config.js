@@ -8,6 +8,7 @@ const ADDON_COMMUNITY_LIST = 'https://stremio-addons.netlify.app/';
 const HLS_PLAYLIST = "stream-q-720.m3u8";
 // Sensible dev defaults so the app still works when .env files aren't present/injected.
 const WS_SERVER = process.env.VUE_APP_WS_SERVER || "ws://localhost:8181";
+const HTTP_SERVER = WS_SERVER.replace(/^ws(s)?:\/\//, (m, s) => s ? 'https://' : 'http://');
 const APP_TITLE = process.env.VUE_APP_TITLE || "Peario";
 
 export {
@@ -19,5 +20,6 @@ export {
     ADDON_COMMUNITY_LIST,
     HLS_PLAYLIST,
     WS_SERVER,
+    HTTP_SERVER,
     APP_TITLE
 };

@@ -63,6 +63,7 @@ import router from '@/router';
 import StremioService from "@/services/stremio.service";
 import AddonService from "@/services/addon.service";
 import ClientService from "@/services/client.service";
+import { sortStreamsWithTorrentOrdering } from "@/services/streamRank.service";
 
 import AddonManager from '@/components/AddonManager.vue';
 import Segments from '@/components/ui/Segments.vue';
@@ -94,9 +95,78 @@ const loadStreams = () => {
     loadStreamsDebouncer = setTimeout(async () => {
         const { id, type } = router.currentRoute.value.params;
         if (id && type) {
+            // Ensure we're using the full episode ID (not truncated to season level).
+            // For series, the route id should be the full episode ID (e.g., tt1196946:5:2, not tt1196946:5).
+            const contentId = id;
+            
+            // Debug: log what we're querying addons for.
+            if (process.env.NODE_ENV === 'development') {
+                console.log('[Stream] loadStreams() querying addons', {
+                    contentId,
+                    type,
+                    routeId: id,
+                    isSeries: type === 'series',
+                    idParts: id.split(':'),
+                });
+            }
+            
             const installedAddons = collectionState.value && collectionState.value.streams.filter(addon => installedAddonsState.value.includes(addon.transportUrl));
-            if (installedAddons)
-                streams.value = await AddonService.getStreams(installedAddons, type, id);
+            if (installedAddons) {
+                let fetchedStreams = await AddonService.getStreams(installedAddons, type, contentId);
+                
+                // Debug: log what addons returned.
+                if (process.env.NODE_ENV === 'development') {
+                    console.log('[Stream] loadStreams() addons returned', {
+                        contentId,
+                        streamCount: fetchedStreams?.length ?? 0,
+                        torrentCount: fetchedStreams?.filter(s => s?.infoHash != null).length ?? 0,
+                        urlCount: fetchedStreams?.filter(s => s?.url != null && s?.infoHash == null).length ?? 0,
+                    });
+                }
+                
+                // Fallback for series: if addons return 0 valid streams for a specific episode,
+                // try querying for season-level streams. Some addons (like Orion) may only return
+                // error placeholders for certain episodes, or may only have season packs.
+                if (type === 'series' && (!fetchedStreams || fetchedStreams.length === 0)) {
+                    const idParts = contentId.split(':');
+                    if (idParts.length >= 2) {
+                        const seasonId = `${idParts[0]}:${idParts[1]}`; // e.g., "tt1196946:5"
+                        
+                        if (process.env.NODE_ENV === 'development') {
+                            console.log('[Stream] loadStreams() fallback: querying season-level streams', {
+                                episodeId: contentId,
+                                seasonId,
+                            });
+                        }
+                        
+                        const seasonStreams = await AddonService.getStreams(installedAddons, type, seasonId);
+                        
+                        if (process.env.NODE_ENV === 'development') {
+                            console.log('[Stream] loadStreams() season-level streams returned', {
+                                seasonId,
+                                streamCount: seasonStreams?.length ?? 0,
+                                torrentCount: seasonStreams?.filter(s => s?.infoHash != null).length ?? 0,
+                            });
+                        }
+                        
+                        // Only use season-level torrents (they can be matched to episodes via fileIdx).
+                        // Filter out non-torrent streams from season-level queries (they're not episode-specific).
+                        // BUT: preserve error streams from Orion so users can see daily cap messages.
+                        fetchedStreams = (seasonStreams || []).filter(s => {
+                            if (s?.infoHash != null) return true; // Keep torrents
+                            // Keep error streams from Orion (they have error messages users need to see)
+                            const isOrion = s?.addon?.manifest?.name?.toLowerCase().includes('orion') || s?._isOrionAddon === true;
+                            const title = `${s?.title ?? ''} ${s?.name ?? ''}`.toLowerCase();
+                            if (isOrion && (title.includes('error') || title.includes('daily') || title.includes('limit'))) {
+                                return true; // Keep Orion error streams
+                            }
+                            return false; // Filter out other non-torrent streams
+                        });
+                    }
+                }
+                
+                streams.value = sortStreamsWithTorrentOrdering(fetchedStreams);
+            }
         }
         loading.value = false;
     }, 250);
@@ -105,12 +175,26 @@ const loadStreams = () => {
 const createRoom = (stream) => {
     // Important for series: use the *episode* id (e.g. tt123:1:1) so subtitle addons/OpenSubtitles return results.
     const { id } = router.currentRoute.value.params;
-    ClientService.send('room.new', { stream, meta: { ...meta.value, id } });
+    ClientService.send('room.new', { stream, meta: meta.value, contentId: id });
 };
 
 watch(installedAddonsState, () => loadStreams());
-watch(selectedSeason, () => loadStreams());
+watch(selectedSeason, () => {
+    // When season changes, select the first episode of that season to ensure we have a valid episode ID.
+    if (isSeries.value && meta.value?.videos) {
+        const firstEpisode = meta.value.videos
+            .filter((video) => video.season === selectedSeason.value)
+            .sort((a, b) => a.episode - b.episode)[0];
+        if (firstEpisode) {
+            selectedEpisode.value = firstEpisode;
+            // This will trigger the selectedEpisode watcher which updates the route and loads streams.
+            return;
+        }
+    }
+    loadStreams();
+});
 watch(selectedEpisode, (value) => {
+    if (!value || !value.id) return;
     // Keep the user on the /stream/:type/:id route; value.id is an episode id for series (tt...:season:episode).
     router.replace({ name: 'stream', params: { ...router.currentRoute.value.params, id: value.id } });
     loadStreams();

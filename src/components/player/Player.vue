@@ -19,9 +19,10 @@
         <video ref="videoRef" :src="options.src" :poster="options.meta.background"
             @click="showControls"
             @timeupdate="updateCurrentTime"
+            @ended="onEnded"
             @waiting="() => updateBuffering(true)"
-            @loadedmetadata="() => updateBuffering(false)"
-            @canplay="() => updateBuffering(false)"
+            @loadedmetadata="onLoadedMedia"
+            @canplay="onLoadedMedia"
             @error="onVideoError">
         </video>
 
@@ -29,7 +30,28 @@
             <AutoSyncControl></AutoSyncControl>
 
             <div class="panel">
-                <PlayPauseControl class="control" :options="options" @change="onPlayerChange()"></PlayPauseControl>
+                <div
+                    class="episode-nav control"
+                    v-if="showEpisodeNav"
+                    :class="{ disabled: !canChangeEpisode }"
+                    @click="onPrev">
+                    <ion-icon name="play-skip-back-outline"></ion-icon>
+                </div>
+
+                <PlayPauseControl
+                    class="control"
+                    :options="options"
+                    @change="onPlayerChange()"
+                    @requestSource="() => emit('requestSource')"
+                ></PlayPauseControl>
+
+                <div
+                    class="episode-nav control"
+                    v-if="showEpisodeNav"
+                    :class="{ disabled: !canChangeEpisode }"
+                    @click="onNext">
+                    <ion-icon name="play-skip-forward-outline"></ion-icon>
+                </div>
 
                 <div class="timer control" v-to-timer="currentTime"></div>
             </div>
@@ -40,8 +62,20 @@
 
             <div class="panel">
                 <VolumeContol class="control" />
-                <SubtitlesControl class="control" v-if="options.src && options.meta" :videoUrl="options.src" :meta="options.meta" :userSubtitle="userSubtitle" />
-                <HlsControl class="control" v-if="options.hls" :options="options" />
+                <SubtitlesControl class="control" v-if="options.src && options.meta" :videoUrl="options.src" :meta="options.meta" :contentId="options.contentId" :userSubtitle="userSubtitle" />
+                <HlsControl
+                    class="control"
+                    v-if="options.hls"
+                    :options="options"
+                    @loaded="(p) => emit('hlsLoaded', p)"
+                />
+                <QuickSwitchControl
+                    v-if="props.quickSwitch"
+                    :quickSwitch="props.quickSwitch"
+                    @episode="(v) => emit('quickSwitchEpisode', v)"
+                    @stream="(v) => emit('quickSwitchStream', v)"
+                    @quality="(v) => emit('quickSwitchQuality', v)"
+                />
                 <FullScreenControl class="control" :player="playerRef" :video="videoRef" />
             </div>
         </div>
@@ -60,12 +94,14 @@ import TimeBarControl from "./controls/TimeBar.vue";
 import VolumeContol from "./controls/Volume.vue";
 import SubtitlesControl from "./controls/Subtitles.vue";
 import HlsControl from "./controls/Hls.vue";
+import QuickSwitchControl from "./controls/QuickSwitch.vue";
 import FullScreenControl from "./controls/FullScreen.vue";
 
 const props = defineProps({
     options: {
         src: String,
         hls: String,
+        contentId: String,
         meta: {
             id: String,
             type: String,
@@ -73,10 +109,11 @@ const props = defineProps({
             background: String,
         },
         isOwner: Boolean
-    }
+    },
+    quickSwitch: Object
 });
 
-const emit = defineEmits(['change']);
+const emit = defineEmits(['change', 'ended', 'prev', 'next', 'quickSwitchEpisode', 'quickSwitchStream', 'quickSwitchQuality', 'mediaLoaded', 'hlsLoaded', 'requestSource']);
 
 const locked = computed(() => store.state.player.locked);
 const paused = computed(() => store.state.player.paused);
@@ -88,10 +125,48 @@ const volume = computed(() => store.state.player.volume);
 const playerRef = ref(null);
 const videoRef = ref(null);
 const userSubtitle = ref(null);
+const lastAutoRecover = ref({ src: null });
+
+const options = computed(() => props.options || {});
+
+const showEpisodeNav = computed(() => {
+    return Boolean(options.value && options.value.meta && options.value.meta.type === 'series' && options.value.contentId);
+});
+
+const canChangeEpisode = computed(() => {
+    return Boolean(options.value && options.value.isOwner);
+});
+
+const onPrev = () => {
+    if (!canChangeEpisode.value) return;
+    emit('prev');
+};
+
+const onNext = () => {
+    if (!canChangeEpisode.value) return;
+    emit('next');
+};
 
 watch(volume, (value) => {
     videoRef.value.volume = value;
 });
+
+const tryPlayIfDesired = () => {
+    if (!videoRef.value) return;
+    if (locked.value) return;
+    if (paused.value) return;
+
+    const p = videoRef.value.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+};
+
+watch(
+    () => props.options && props.options.src,
+    () => {
+        // Source changed: if the room wants playback running, attempt play again.
+        tryPlayIfDesired();
+    }
+);
 
 let hideTimeout = null;
 const showControls = () => {
@@ -101,6 +176,7 @@ const showControls = () => {
 };
 
 const hideControls = () => {
+    if (store.state.player.preventHide) return;
     if (!paused.value) store.commit('player/updateHideState', true);
 };
 
@@ -111,11 +187,24 @@ const onPlayerChange = () => {
 
 const updateBuffering = (value) => {
     store.commit('player/updateBuffering', value);
+    // Retrying once the media becomes playable makes autoplay-next reliable after src changes.
+    if (!value) tryPlayIfDesired();
+};
+
+const onLoadedMedia = () => {
+    updateBuffering(false);
+    const el = videoRef.value;
+    const src = el?.currentSrc || el?.src || null;
+    emit('mediaLoaded', { src });
 };
 
 const updateCurrentTime = () => {
     if (videoRef.value)
         store.commit('player/updateCurrentTime', videoRef.value.currentTime);
+};
+
+const onEnded = () => {
+    emit('ended');
 };
 
 const onSubtitlesDropped = (event) => {
@@ -132,13 +221,34 @@ const onSubtitlesDropped = (event) => {
 const onVideoError = () => {
     const el = videoRef.value;
     const mediaError = el && el.error ? el.error : null;
+    const src = el?.currentSrc || el?.src || options.value?.src || null;
     // eslint-disable-next-line no-console
     console.error('Video error', {
-        src: el?.currentSrc || el?.src,
+        src,
         networkState: el?.networkState,
         readyState: el?.readyState,
         error: mediaError,
     });
+
+    // Don't leave the UI stuck in "buffering" forever.
+    try {
+        store.commit('player/updateBuffering', false);
+        store.commit('player/updatePaused', true);
+        showControls();
+    } catch (_) {
+        // ignore
+    }
+
+    // Owner-only recovery: if the currently selected stream is invalid/unplayable,
+    // ask the room to pick another source instead of dead-ending on an infinite loader.
+    try {
+        if (options.value?.isOwner && src && lastAutoRecover.value.src !== src) {
+            lastAutoRecover.value = { src };
+            emit('requestSource');
+        }
+    } catch (_) {
+        // ignore
+    }
 };
 
 onMounted(() => {
@@ -235,6 +345,13 @@ $overlay-background-color: rgba(0, 0, 0, 0.5);
             padding: 0.5em;
             font-size: 1.8em;
             cursor: pointer;
+        }
+
+        .episode-nav {
+            &.disabled {
+                opacity: 0.3;
+                pointer-events: none;
+            }
         }
 
         .timer {

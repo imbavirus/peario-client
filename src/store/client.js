@@ -40,13 +40,34 @@ export default {
     actions: {
         start({ commit }) {
             ClientService.connect(WS_SERVER);
-            ClientService.events.on('opened', () => commit('updateStatus', true));
+            ClientService.events.on('opened', () => {
+                // Reclaim previous identity across refreshes (prevents losing room ownership).
+                try {
+                    const storedId = localStorage.getItem('peario_user_id');
+                    if (storedId) ClientService.send('user.identify', { id: storedId });
+                } catch (_) {
+                    // ignore
+                }
+                commit('updateStatus', true);
+            });
             ClientService.events.on('closed', () => commit('updateStatus', false));
             ClientService.events.on('ready', ({ user }) => {
                 commit('updateReady', true);
                 commit('updateUser', user);
+                try {
+                    if (user && user.id) localStorage.setItem('peario_user_id', user.id);
+                } catch (_) {
+                    // ignore
+                }
             });
-            ClientService.events.on('user', ({ user }) => commit('updateUser', user));
+            ClientService.events.on('user', ({ user }) => {
+                commit('updateUser', user);
+                try {
+                    if (user && user.id) localStorage.setItem('peario_user_id', user.id);
+                } catch (_) {
+                    // ignore
+                }
+            });
             ClientService.events.on('error', error => commit('updateError', error));
             ClientService.events.on('room', room => {
                 commit('updateRoom', room);

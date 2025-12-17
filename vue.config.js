@@ -34,6 +34,20 @@ module.exports = defineConfig({
                     ws: true,
                     pathRewrite: { '^/stremio': '' },
                 },
+                // Proxy Stremio subtitle file host to avoid CORS in development.
+                '^/subs': {
+                    target: 'https://subs5.strem.io',
+                    changeOrigin: true,
+                    secure: true,
+                    pathRewrite: { '^/subs': '' },
+                },
+                // Proxy Peario server HTTP endpoints in development (keeps requests same-origin).
+                '^/peario': {
+                    target: 'http://localhost:8181',
+                    changeOrigin: true,
+                    ws: false,
+                    pathRewrite: { '^/peario': '' },
+                },
             },
         },
     },

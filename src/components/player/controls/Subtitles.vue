@@ -62,6 +62,7 @@ export default {
     props: {
         videoUrl: String,
         meta: Object,
+        contentId: String,
         userSubtitle: File
     },
     computed: {
@@ -85,6 +86,12 @@ export default {
         };
     },
     watch: {
+        contentId() {
+            this.fetchSubtitles();
+        },
+        videoUrl() {
+            this.fetchSubtitles();
+        },
         list() {
             this.langs = this.extractLangs(this.list);
 
@@ -145,12 +152,12 @@ export default {
 
             const stremioPromise = StremioService.getSubtitles({
                 type: this.meta.type,
-                id: this.meta.id,
+                id: this.contentId || this.meta.id,
                 url: this.videoUrl,
             }).then(stremioSubtitles => addToList(stremioSubtitles));
 
             const addonPromises = this.installedSubtitles.map(addon =>
-                AddonService.getSubtitles([addon], this.meta.type, this.meta.id)
+                AddonService.getSubtitles([addon], this.meta.type, this.contentId || this.meta.id)
                     .then(addonsSubtitles => addToList(addonsSubtitles))
             );
 

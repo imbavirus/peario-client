@@ -6,6 +6,7 @@ export default {
         currentTime: 0,
         locked: true,
         controlsHidden: false,
+        preventHide: false,
         buffering: true,
         volume: 0.5,
         autoSync: true
@@ -25,6 +26,9 @@ export default {
         },
         controlsHidden(state) {
             return state.controlsHidden;
+        },
+        preventHide(state) {
+            return state.preventHide;
         },
         buffering(state) {
             return state.buffering;
@@ -60,6 +64,9 @@ export default {
         },
         updateHideState(state, value) {
             state.controlsHidden = value;
+        },
+        updatePreventHide(state, value) {
+            state.preventHide = value;
         },
         updateBuffering(state, value) {
             state.buffering = value;

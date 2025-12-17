@@ -31,10 +31,20 @@ export default {
         timecode(value) {
             this.html = SubtitleService.getCurrent(value);
         },
-        current(subtitle) {
+        async current(subtitle) {
             if (subtitle) {
-                if (subtitle.url) SubtitleService.set(subtitle.url);
-                else if (subtitle.data) SubtitleService.setCustom(subtitle.data);
+                try {
+                    if (subtitle.url) await SubtitleService.set(subtitle.url);
+                    else if (subtitle.data) SubtitleService.setCustom(subtitle.data);
+                    // Force a refresh immediately after loading/parsing so you don't have to wait
+                    // for the next timeupdate tick.
+                    this.html = SubtitleService.getCurrent(this.timecode || 0);
+                } catch (e) {
+                    // eslint-disable-next-line no-console
+                    console.warn('Failed to load subtitles', e);
+                    this.$toast?.error?.('Failed to load subtitles');
+                    this.html = '';
+                }
             }
         }
     }
@@ -44,6 +54,7 @@ export default {
 <style lang="scss" scoped>
 #subtitle {
     position: absolute;
+    z-index: 10;
     width: 100%;
     bottom: 2rem;
     display: flex;

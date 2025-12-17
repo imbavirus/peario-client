@@ -51,6 +51,8 @@ const HlsService = {
             }
 
             try {
+                if (!this.hls) this.init();
+
                 const onManifestParsed = () => {
                     cleanup();
                     resolve();
@@ -60,6 +62,12 @@ const HlsService = {
                     // Reject on fatal errors so callers can show UI instead of buffering forever.
                     if (data && data.fatal) {
                         cleanup();
+                        // Best-effort detach to allow falling back to raw src.
+                        try {
+                            this.hls.detachMedia();
+                        } catch (_) {
+                            // ignore
+                        }
                         reject(new Error(data.details || data.type || 'HLS fatal error'));
                     }
                 };
@@ -80,8 +88,18 @@ const HlsService = {
     },
 
     clear() {
-        this.hls.detachMedia();
-        this.hls.destroy();
+        if (!this.hls) return;
+        try {
+            this.hls.detachMedia();
+        } catch (_) {
+            // ignore
+        }
+        try {
+            this.hls.destroy();
+        } catch (_) {
+            // ignore
+        }
+        this.hls = null;
     }
 
 };

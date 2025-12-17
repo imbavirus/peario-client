@@ -12,6 +12,7 @@ import store from '../../../store';
 
 export default {
     name: 'HlsControl',
+    emits: ['loaded', 'unloaded'],
     props: {
         options: Object
     },
@@ -22,12 +23,46 @@ export default {
         return {
             isHls: false,
             hasTriedFallback: false,
+            autoTriedHls: false,
+        }
+    },
+    watch: {
+        // When the room switches to a new stream (autoplay-next), reinit HLS state.
+        options: {
+            deep: true,
+            handler() {
+                this.isHls = false;
+                this.hasTriedFallback = false;
+                this.autoTriedHls = false;
+                HlsService.clear();
+                HlsService.init();
+
+                // Prefer HLS by default when available (torrent streams).
+                this.autoStartHls();
+            }
         }
     },
     methods: {
+        isPlaybackDesired() {
+            // Desired playback state should come from the app (store), not the media element.
+            // Right after swapping src / attaching HLS, the element is typically paused even if we intend to keep playing.
+            try {
+                return !store.state.player.paused;
+            } catch (_) {
+                return false;
+            }
+        },
+        async autoStartHls() {
+            if (!this.options || !this.options.hls) return;
+            if (this.isHls) return;
+            if (this.autoTriedHls) return;
+
+            this.autoTriedHls = true;
+            await this.toggleHls();
+        },
         async onVideoError() {
-            // If raw stream fails and we have an HLS playlist, attempt a one-time fallback.
-            if (this.options && this.options.hls && !this.isHls && !this.hasTriedFallback) {
+            // If HLS stream fails, fall back to raw source once.
+            if (this.options && this.options.hls && this.isHls && !this.hasTriedFallback) {
                 this.hasTriedFallback = true;
                 await this.toggleHls();
                 return;
@@ -37,14 +72,29 @@ export default {
         },
         async toggleHls() {
             const currentTime = this.video.currentTime;
-            const wasPlaying = !this.video.paused;
+            const shouldPlayAfter = this.isPlaybackDesired() || !this.video.paused;
 
             try {
-                if (!this.isHls) await HlsService.loadHls(this.options.hls, this.video);
-                else store.commit('player/updateVideoSrc', this.options.src);
+                if (!this.isHls) {
+                    await HlsService.loadHls(this.options.hls, this.video);
+                    this.$emit('loaded', { playlistUrl: this.options.hls, src: this.options.src });
+                } else {
+                    store.commit('player/updateVideoSrc', this.options.src);
+                    this.$emit('unloaded', { src: this.options.src });
+                }
             } catch (e) {
                 // If HLS attach fails, don't leave the player stuck in a "half toggled" state.
                 console.error('Failed to toggle HLS', e);
+                try {
+                    HlsService.clear();
+                    HlsService.init();
+                } catch (_) {
+                    // ignore
+                }
+                // Ensure we're on the raw source after a failed HLS attempt.
+                if (this.options && this.options.src) {
+                    store.commit('player/updateVideoSrc', this.options.src);
+                }
                 this.$toast.error(`Failed to load stream: ${e && e.message ? e.message : 'unknown error'}`);
                 return;
             }
@@ -52,7 +102,10 @@ export default {
             this.isHls = !this.isHls;
             store.commit('player/updateVideoCurrentTime', currentTime);
 
-            if (wasPlaying) this.video.play();
+            if (shouldPlayAfter) {
+                const p = this.video.play();
+                if (p && typeof p.catch === 'function') p.catch(() => {});
+            }
             this.isHls ? this.$toast.success(this.$t('toasts.hlsStream')) : this.$toast.success(this.$t('toasts.sourceStream'));
         }
     },
@@ -60,12 +113,8 @@ export default {
         HlsService.init();
         this.video.addEventListener('error', this.onVideoError);
 
-        // For torrent streams we usually generate an HLS playlist. The raw file endpoint can "buffer forever"
-        // without throwing, so prefer HLS by default when available.
-        if (this.options && this.options.hls) {
-            this.hasTriedFallback = true;
-            this.toggleHls();
-        }
+        // Prefer HLS by default when available (torrent streams). If it fails, we fall back to raw.
+        this.autoStartHls();
     },
     unmounted() {
         HlsService.clear();
